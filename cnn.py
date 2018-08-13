@@ -6,13 +6,14 @@ import torch
 import torchvision
 import torchvision.transforms as transforms
 
-from torch.autograd import Variable
 import torch.optim as optim
 import torch.nn as nn
 import torch.nn.functional as F
 
 import omniglot
 import memory
+
+torch.utils.backcompat.broadcast_warning.enabled = True
 
 class Net(nn.Module):
     def __init__(self, input_shape):
@@ -75,12 +76,12 @@ for i, data in enumerate(trainloader, 0):
     x, y = data
     for xx, yy in zip(x, y):
         optimizer.zero_grad()
-        xx_cuda, yy_cuda = Variable(xx.cuda()), Variable(yy.cuda())
+        xx_cuda, yy_cuda = torch.tensor(xx).cuda(), torch.tensor(yy).cuda()
         embed = net(xx_cuda, False)
         yy_hat, softmax_embed, loss = mem.query(embed, yy_cuda, False)
         loss.backward()
         optimizer.step()
-        cummulative_loss += loss.data[0]
+        cummulative_loss += loss.item()
         counter += 1
 
     if i % validation_frequency == 0:
@@ -96,7 +97,7 @@ for i, data in enumerate(trainloader, 0):
             x, y = data
             y_hat = []
             for xx, yy in zip(x, y):
-                xx_cuda, yy_cuda = Variable(xx.cuda()), Variable(yy.cuda())
+                xx_cuda, yy_cuda = torch.tensor(xx).cuda(), torch.tensor(yy).cuda()
                 query = net(xx_cuda, True)
                 yy_hat, embed, loss = mem.query(query, yy_cuda, True)
                 y_hat.append(yy_hat)

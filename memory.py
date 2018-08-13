@@ -14,16 +14,8 @@ def random_uniform(shape, low, high, cuda):
     else:
         return result_cpu
 
-def multiply(x):
-    return functools.reduce(lambda x,y: x*y, x, 1)
-
-def flatten(x):
-    """ Flatten matrix into a vector """
-    count = multiply(x.size())
-    return x.resize_(count)
-
 def index(batch_size, x):
-    idx = torch.arange(0, batch_size).long() 
+    idx = torch.arange(0, batch_size).long()
     idx = torch.unsqueeze(idx, -1)
     return torch.cat((idx, x), dim=1)
 
@@ -62,10 +54,10 @@ class Memory(nn.Module):
         self.query_proj = nn.Linear(key_dim, key_dim)
 
     def build(self):
-        self.keys = F.normalize(random_uniform((self.memory_size, self.key_dim), -0.001, 0.001, cuda=True), dim=1)
+        self.keys = F.normalize(random_uniform((self.memory_size, self.key_dim), -0.001, 0.001, cuda=True), dim=1).requires_grad_(False)
         self.keys_var = ag.Variable(self.keys, requires_grad=False)
-        self.values = torch.zeros(self.memory_size, 1).long().cuda()
-        self.age = torch.zeros(self.memory_size, 1).cuda()
+        self.values = torch.zeros(self.memory_size, 1, requires_grad=False).long().cuda()
+        self.age = torch.zeros(self.memory_size, 1, requires_grad=False).cuda()
 
     def predict(self, x):
         batch_size, dims = x.size()
@@ -92,9 +84,9 @@ class Memory(nn.Module):
             x: A normalized matrix of queries of size (batch_size x key_dim)
             y: A matrix of correct labels (batch_size x 1)
         Returns:
-            y_hat, A (batch-size x 1) matrix 
+            y_hat, A (batch-size x 1) matrix
 		        - the nearest neighbor to the query in memory_size
-            softmax_score, A (batch_size x 1) matrix 
+            softmax_score, A (batch_size x 1) matrix
 		        - A normalized score measuring the similarity between query and nearest neighbor
             loss - average loss for memory module
         """
@@ -122,12 +114,13 @@ class Memory(nn.Module):
 
             # collect the memory values corresponding to the topk scores
             batch_size, topk_size = topk_indices.size()
-            flat_topk = flatten(topk_indices)
+            flat_topk = topk_indices.view(-1)
             flat_topk_values = self.values[topk_indices]
             topk_values = flat_topk_values.resize_(batch_size, topk_size)
 
             correct_mask = torch.eq(topk_values, torch.unsqueeze(y.data, dim=1)).float()
-            correct_mask_var = ag.Variable(correct_mask, requires_grad=False)
+            # correct_mask_var = ag.Variable(correct_mask, requires_grad=False)
+            correct_mask_var = correct_mask.detach()
 
             pos_score, pos_idx = torch.topk(torch.mul(cosine_similarity, correct_mask_var), 1, dim=1)
             neg_score, neg_idx = torch.topk(torch.mul(cosine_similarity, 1-correct_mask_var), 1, dim=1)
@@ -140,7 +133,7 @@ class Memory(nn.Module):
             loss = MemoryLoss(pos_score, neg_score, self.margin)
 
         # Update memory
-        self.update(query, y, y_hat, y_hat_indices) 
+        self.update(query, y, y_hat, y_hat_indices)
 
         return y_hat, softmax_score, loss
 
@@ -152,11 +145,10 @@ class Memory(nn.Module):
 
         # Divide batch by correctness
         result = torch.squeeze(torch.eq(y_hat, torch.unsqueeze(y.data, dim=1))).float()
-        incorrect_examples = torch.squeeze(torch.nonzero(1-result))
-        correct_examples = torch.squeeze(torch.nonzero(result))
-
-        incorrect = len(incorrect_examples.size()) > 0
-        correct = len(correct_examples.size()) > 0
+        incorrect_examples = torch.nonzero(1-result).view(-1)
+        correct_examples = torch.nonzero(result).view(-1)
+        incorrect = incorrect_examples.size(0) > 0
+        correct = correct_examples.size(0) > 0
 
         # 2) Correct: if V[n1] = v
         # Update Key k[n1] <- normalize(q + K[n1]), Reset Age A[n1] <- 0
@@ -165,12 +157,13 @@ class Memory(nn.Module):
             correct_keys = self.keys[correct_indices]
             correct_query = query.data[correct_examples]
 
+            # print(correct_indices.shape, correct_examples.shape)
             new_correct_keys = F.normalize(correct_keys + correct_query, dim=1)
             self.keys[correct_indices] = new_correct_keys
             self.age[correct_indices] = 0
 
         # 3) Incorrect: if V[n1] != v
-        # Select item with oldest age, Add random offset - n' = argmax_i(A[i]) + r_i 
+        # Select item with oldest age, Add random offset - n' = argmax_i(A[i]) + r_i
         # K[n'] <- q, V[n'] <- v, A[n'] <- 0
         if incorrect:
             incorrect_size = incorrect_examples.size()[0]
@@ -182,5 +175,5 @@ class Memory(nn.Module):
             oldest_indices = torch.squeeze(topk_indices)
 
             self.keys[oldest_indices] = incorrect_query
-            self.values[oldest_indices] = incorrect_values
+            self.values[oldest_indices] = incorrect_values.unsqueeze(1)
             self.age[oldest_indices] = 0

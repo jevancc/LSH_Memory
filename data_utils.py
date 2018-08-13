@@ -86,7 +86,7 @@ def write_datafiles(directory, write_file,
   logging.info('Reading the data.')
   images, labels, info = crawl_directory(directory, augment_with_rotations=rotate, first_label=first_label)
 
-  images_np = np.zeros([len(images), imgwidth, imgheight], dtype=np.bool)
+  images_np = np.zeros([len(images), imgwidth, imgheight], dtype=np.uint8)
   labels_np = np.zeros([len(labels)], dtype=np.uint32)
   for idx in range(len(images)):
     images_np[idx, :, :] = images[idx]
